@@ -68,7 +68,7 @@ def _pyi_pkgutil_iter_modules(path=None, prefix=''):
         # Only single path is supported, and it must start with
         # sys._MEIPASS
         pkg_path = os.path.normpath(path[0])
-        assert pkg_path.startswith(SYS_PREFIX)
+        assert pkg_path.startswith(str(SYS_PREFIX))
         # Construct package prefix from path...
         pkg_prefix = pkg_path[SYS_PREFIXLEN:]
         pkg_prefix = pkg_prefix.replace(os.path.sep, '.')

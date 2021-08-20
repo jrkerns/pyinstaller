@@ -21,6 +21,8 @@ def _get_commands():
     # Django groupss commands by app.
     # This returns static dict() as it is for django 1.8 and the default project.
     commands = {
+         'qcluster': 'django_q',
+         'runwaitress': 'scheduler',
          'changepassword': 'django.contrib.auth',
          'check': 'django.core',
          'clearsessions': 'django.contrib.sessions',

@@ -125,7 +125,10 @@ def load(raw: bytes, code: CodeType) -> str:
     # If the last instruction byte is a LOAD_FAST:
     if raw[-2] == dis.opmap["LOAD_FAST"]:
         # Then this is a local variable.
-        return code.co_varnames[index]
+        try:
+            return code.co_varnames[index]
+        except IndexError:
+            return code.co_names[index]
     # Or if it's a LOAD_CONST:
     if raw[-2] == dis.opmap["LOAD_CONST"]:
         # Then this is a literal.
