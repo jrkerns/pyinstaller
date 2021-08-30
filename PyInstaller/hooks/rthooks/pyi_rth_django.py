@@ -23,6 +23,7 @@ def _get_commands():
     commands = {
          'qcluster': 'django_q',
          'runwaitress': 'scheduler',
+         'trayicon': 'scheduler',
          'changepassword': 'django.contrib.auth',
          'check': 'django.core',
          'clearsessions': 'django.contrib.sessions',
