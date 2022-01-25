@@ -21,6 +21,7 @@ def _get_commands():
     # Django groupss commands by app.
     # This returns static dict() as it is for django 1.8 and the default project.
     commands = {
+         'fix_webpack_stats': 'scheduler',
          'qcluster': 'django_q',
          'runwaitress': 'scheduler',
          'trayicon': 'scheduler',
