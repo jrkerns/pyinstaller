@@ -380,7 +380,7 @@ _pyi_extract_exception_message(PyObject *pvalue)
     if (pvalue_cchar) {
         retval = strdup(pvalue_cchar);
     }
-    Py_DECREF(pvalue_str);
+    PI_Py_DecRef(pvalue_str);
 
     return retval;
 }
@@ -418,40 +418,45 @@ _pyi_extract_exception_traceback(PyObject *ptype, PyObject *pvalue,
     if (module != NULL) {
         PyObject *func = PI_PyObject_GetAttrString(module, "format_exception");
         if (func) {
-            PyObject *tb, *tb_str;
+            PyObject *tb = NULL;
+            PyObject *tb_str = NULL;
             const char *tb_cchar = NULL;
             tb = PI_PyObject_CallFunctionObjArgs(func, ptype, pvalue,
                                                  ptraceback, NULL);
-            if (fmt_mode == PYI_TB_FMT_REPR) {
-                /* Represent the list as string */
-                tb_str = PI_PyObject_Str(tb);
-            } else {
-                /* Join the list using empty string */
-                PyObject *tb_empty = PI_PyUnicode_FromString("");
-                tb_str = PI_PyUnicode_Join(tb_empty, tb);
-                Py_DECREF(tb_empty);
-                if (fmt_mode == PYI_TB_FMT_CRLF) {
-                    /* Replace LF with CRLF */
-                    PyObject *lf = PI_PyUnicode_FromString("\n");
-                    PyObject *crlf = PI_PyUnicode_FromString("\r\n");
-                    PyObject *tb_str_crlf = PI_PyUnicode_Replace(tb_str, lf, crlf, -1);
-                    Py_DECREF(lf);
-                    Py_DECREF(crlf);
-                    /* Swap */
-                    Py_DECREF(tb_str);
-                    tb_str = tb_str_crlf;
+            if (tb != NULL) {
+                if (fmt_mode == PYI_TB_FMT_REPR) {
+                    /* Represent the list as string */
+                    tb_str = PI_PyObject_Str(tb);
+                } else {
+                    /* Join the list using empty string */
+                    PyObject *tb_empty = PI_PyUnicode_FromString("");
+                    tb_str = PI_PyUnicode_Join(tb_empty, tb);
+                    PI_Py_DecRef(tb_empty);
+                    if (fmt_mode == PYI_TB_FMT_CRLF) {
+                        /* Replace LF with CRLF */
+                        PyObject *lf = PI_PyUnicode_FromString("\n");
+                        PyObject *crlf = PI_PyUnicode_FromString("\r\n");
+                        PyObject *tb_str_crlf = PI_PyUnicode_Replace(tb_str, lf, crlf, -1);
+                        PI_Py_DecRef(lf);
+                        PI_Py_DecRef(crlf);
+                        /* Swap */
+                        PI_Py_DecRef(tb_str);
+                        tb_str = tb_str_crlf;
+                    }
                 }
             }
-            tb_cchar = PI_PyUnicode_AsUTF8(tb_str);
-            if (tb_cchar) {
-                retval = strdup(tb_cchar);
+            if (tb_str != NULL) {
+                tb_cchar = PI_PyUnicode_AsUTF8(tb_str);
+                if (tb_cchar) {
+                    retval = strdup(tb_cchar);
+                }
             }
-            Py_DECREF(tb);
-            Py_DECREF(tb_str);
+            PI_Py_DecRef(tb);
+            PI_Py_DecRef(tb_str);
         }
-        Py_DECREF(func);
+        PI_Py_DecRef(func);
     }
-    Py_DECREF(module);
+    PI_Py_DecRef(module);
 
     return retval;
 }
@@ -474,14 +479,14 @@ pyi_launch_run_scripts(ARCHIVE_STATUS *status)
     __main__ = PI_PyImport_AddModule("__main__");
 
     if (!__main__) {
-        FATALERROR("Could not get __main__ module.");
+        FATALERROR("Could not get __main__ module.\n");
         return -1;
     }
 
     main_dict = PI_PyModule_GetDict(__main__);
 
     if (!main_dict) {
-        FATALERROR("Could not get __main__ module's dict.");
+        FATALERROR("Could not get __main__ module's dict.\n");
         return -1;
     }
 
@@ -499,7 +504,7 @@ pyi_launch_run_scripts(ARCHIVE_STATUS *status)
             VS("LOADER: Running %s.py\n", ptoc->name);
             __file__ = PI_PyUnicode_FromString(buf);
             PI_PyObject_SetAttrString(__main__, "__file__", __file__);
-            Py_DECREF(__file__);
+            PI_Py_DecRef(__file__);
 
             /* Unmarshall code object */
             code = PI_PyMarshal_ReadObjectFromString((const char *) data, ptoc->ulen);
@@ -543,6 +548,7 @@ pyi_launch_run_scripts(ARCHIVE_STATUS *status)
                     #endif
 
                     PI_PyErr_Fetch(&ptype, &pvalue, &ptraceback);
+                    PI_PyErr_NormalizeException(&ptype, &pvalue, &ptraceback);
                     msg_exc = _pyi_extract_exception_message(pvalue);
                     if (pyi_arch_get_option(status, "pyi-disable-windowed-traceback") != NULL) {
                         /* Traceback is disabled via option */
@@ -596,82 +602,10 @@ pyi_launch_run_scripts(ARCHIVE_STATUS *status)
     return 0;
 }
 
-/*
- * call a simple "int func(void)" entry point.  Assumes such a function
- * exists in the main namespace.
- * Return non zero on failure, with -2 if the specific error is
- * that the function does not exist in the namespace.
- */
-int
-callSimpleEntryPoint(char *name, int *presult)
-{
-    int rc = -1;
-    /* Objects with no ref. */
-    PyObject *mod, *dict;
-    /* Objects with refs to kill. */
-    PyObject *func = NULL, *pyresult = NULL;
-
-    mod = PI_PyImport_AddModule("__main__");  /* NO ref added */
-
-    if (!mod) {
-        VS("LOADER: No __main__\n");
-        goto done;
-    }
-    dict = PI_PyModule_GetDict(mod);  /* NO ref added */
-
-    if (!mod) {
-        VS("LOADER: No __dict__\n");
-        goto done;
-    }
-    func = PI_PyDict_GetItemString(dict, name);
-
-    if (func == NULL) {  /* should explicitly check KeyError */
-        VS("LOADER: CallSimpleEntryPoint can't find the function name\n");
-        rc = -2;
-        goto done;
-    }
-    pyresult = PI_PyObject_CallFunction(func, "");
-
-    if (pyresult == NULL) {
-        goto done;
-    }
-    PI_PyErr_Clear();
-    *presult = PI_PyLong_AsLong(pyresult);
-    rc = PI_PyErr_Occurred() ? -1 : 0;
-    VS( rc ? "LOADER: Finished with failure\n" : "LOADER: Finished OK\n");
-    /* all done! */
-done:
-    Py_XDECREF(func);
-    Py_XDECREF(pyresult);
-
-    /* can't leave Python error set, else it may
-     *  cause failures in later async code */
-    if (rc) {
-        /* But we will print them 'cos they may be useful */
-        PI_PyErr_Print();
-    }
-    PI_PyErr_Clear();
-    return rc;
-}
-
-/* For finer grained control. */
-
 void
 pyi_launch_initialize(ARCHIVE_STATUS * status)
 {
-#if defined(_WIN32)
-    char * manifest;
-    manifest = pyi_arch_get_option(status, "pyi-windows-manifest-filename");
-
-    if (NULL != manifest) {
-        char manifest_path[PATH_MAX];
-        if (pyi_path_join(manifest_path, status->mainpath, manifest) == NULL) {
-            FATALERROR("Path of manifest-file (%s) length exceeds "
-                       "buffer[%d] space\n", status->mainpath, PATH_MAX);
-        };
-        CreateActContext(manifest_path);
-    }
-#endif /* if defined(_WIN32) */
+    /* Nothing to do here at the moment. */
 }
 
 /*

@@ -22,9 +22,6 @@
 
 #ifdef _WIN32
 
-/* windows.h will use API for WinServer 2003 with SP1 and WinXP with SP2 */
-#define _WIN32_WINNT 0x0502
-
 #include <windows.h>
 #include <commctrl.h> /* InitCommonControls */
 #include <stdio.h>    /* _fileno */
@@ -36,13 +33,6 @@
 #include "pyi_global.h"  /* PATH_MAX */
 #include "pyi_utils.h"
 #include "pyi_win32_utils.h"
-
-static HANDLE hCtx = INVALID_HANDLE_VALUE;
-static ULONG_PTR actToken;
-
-#ifndef STATUS_SXS_EARLY_DEACTIVATION
-    #define STATUS_SXS_EARLY_DEACTIVATION 0xC015000F
-#endif
 
 #define ERROR_STRING_MAX 4096
 static char errorString[ERROR_STRING_MAX];
@@ -92,53 +82,6 @@ char * GetWinErrorString(DWORD error_code) {
     return errorString;
 }
 
-int
-CreateActContext(const char *manifestpath)
-{
-    wchar_t * manifestpath_w;
-    ACTCTXW ctx;
-    BOOL activated;
-    HANDLE k32;
-
-    HANDLE (WINAPI * CreateActCtx)(PACTCTXW pActCtx);
-    BOOL (WINAPI * ActivateActCtx)(HANDLE hActCtx, ULONG_PTR * lpCookie);
-
-    /* Setup activation context */
-    VS("LOADER: manifestpath: %s\n", manifestpath);
-    manifestpath_w = pyi_win32_utils_from_utf8(NULL, manifestpath, 0);
-
-    k32 = LoadLibraryA("kernel32");
-    CreateActCtx = (void*)GetProcAddress(k32, "CreateActCtxW");
-    ActivateActCtx = (void*)GetProcAddress(k32, "ActivateActCtx");
-
-    if (!CreateActCtx || !ActivateActCtx) {
-        VS("LOADER: Cannot find CreateActCtx/ActivateActCtx exports in kernel32.dll\n");
-        return 0;
-    }
-
-    ZeroMemory(&ctx, sizeof(ctx));
-    ctx.cbSize = sizeof(ACTCTX);
-    ctx.lpSource = manifestpath_w;
-    ctx.dwFlags = ACTCTX_FLAG_SET_PROCESS_DEFAULT;
-
-    hCtx = CreateActCtx(&ctx);
-    free(manifestpath_w);
-
-    if (hCtx != INVALID_HANDLE_VALUE) {
-        VS("LOADER: Activation context created\n");
-        activated = ActivateActCtx(hCtx, &actToken);
-
-        if (activated) {
-            VS("LOADER: Activation context activated\n");
-            return 1;
-        }
-    }
-
-    hCtx = INVALID_HANDLE_VALUE;
-    VS("LOADER: Error activating the context: ActivateActCtx: \n%s\n", GetWinErrorString(0));
-    return 0;
-}
-
 /* Convert a wide string to an ANSI string.
  *
  *  Returns a newly allocated buffer containing the ANSI characters terminated by a null
@@ -175,7 +118,7 @@ pyi_win32_wcs_to_mbs(const wchar_t *wstr)
 
     str = (char *)calloc(len + 1, sizeof(char));
     if (str == NULL) {
-        FATAL_WINERROR("win32_wcs_to_mbs", "Out of memory.");
+        FATAL_WINERROR("win32_wcs_to_mbs", "Out of memory.\n");
         return NULL;
     };
 
@@ -310,7 +253,7 @@ pyi_win32_utils_to_utf8(char *str, const wchar_t *wstr, size_t len)
 
         output = (char *)calloc(len + 1, sizeof(char));
         if (output == NULL) {
-            FATAL_WINERROR("win32_utils_to_utf8", "Out of memory.");
+            FATAL_WINERROR("win32_utils_to_utf8", "Out of memory.\n");
             return NULL;
         };
     }
@@ -374,7 +317,7 @@ pyi_win32_utils_from_utf8(wchar_t *wstr, const char *str, size_t wlen)
 
         output = (wchar_t *)calloc(wlen + 1, sizeof(wchar_t));
         if (output == NULL) {
-            FATAL_WINERROR("win32_utils_from_utf8", "Out of memory.");
+            FATAL_WINERROR("win32_utils_from_utf8", "Out of memory.\n");
             return NULL;
         };
     }
@@ -519,6 +462,35 @@ pyi_win32_mkdir(const wchar_t *path)
     if (!CreateDirectoryW(path, &securityAttr)) {
         return -1;
     };
+    return 0;
+}
+
+/* Check if the given path is just a drive letter */
+int pyi_win32_is_drive_root(const wchar_t *path)
+{
+    /* For now, handle just drive letter, optionally followed by the path separator.
+       E.g., "C:" or "Z:\".
+     */
+    size_t len;
+
+    len = wcslen(path);
+    if (len == 2 || len == 3) {
+        /* First character must be a letter */
+        if (!iswalpha(path[0])) {
+            return 0;
+        }
+        /* Second character must be the colon */
+        if (path[1] != L':') {
+            return 0;
+        }
+        /* Third character, if present, must be the Windows directory separator */
+        if (len > 2 && (path[2] != L'\\')) {
+            return 0;
+        }
+
+        return 1;
+    }
+
     return 0;
 }
 

@@ -19,6 +19,13 @@
     #include <windows.h>
     #include <wchar.h>
 #endif
+#ifdef __CYGWIN__
+    #include <sys/cygwin.h>  /* cygwin_conv_path */
+    #include <windows.h>  /* SetDllDirectoryW */
+    /* NOTE: SetDllDirectoryW is part of KERNEL32, which is automatically
+     * linked by Cygwin, so we do not need to explicitly link any
+     * win32 libraries. */
+#endif
 #include <stdio.h>  /* FILE */
 #include <stdlib.h> /* calloc */
 #include <string.h> /* memset */
@@ -37,6 +44,39 @@
 #include "pyi_launch.h"
 #include "pyi_win32_utils.h"
 #include "pyi_splash.h"
+
+
+static int
+_pyi_allow_pkg_sideload(const char *executable)
+{
+    FILE *file = NULL;
+    uint64_t magic_offset;
+    unsigned char magic[8];
+
+    int rc = 0;
+
+    /* First, find the PKG sideload signature in the executable */
+    file = pyi_path_fopen(executable, "rb");
+    if (!file) {
+        return -1;
+    }
+
+    /* Prepare magic pattern */
+    memcpy(magic, MAGIC_BASE, sizeof(magic));
+    magic[3] += 0x0D;  /* 0x00 -> 0x0D */
+
+    /* Find magic pattern in the executable */
+    magic_offset = pyi_utils_find_magic_pattern(file, magic, sizeof(magic));
+    if (magic_offset == 0) {
+        fclose(file);
+        return 1; /* Error code 1: no embedded PKG sideload signature */
+    }
+
+    /* TODO: expand the verification by embedding hash of the PKG file */
+
+    /* Allow PKG to be sideloaded */
+    return 0;
+}
 
 int
 pyi_main(int argc, char * argv[])
@@ -84,6 +124,21 @@ pyi_main(int argc, char * argv[])
      * might get overwritten later on (on Windows and macOS, single
      * process is used for --onedir mode). */
     in_child = (extractionpath != NULL);
+    if (in_child) {
+        /* Check if _PYI_ONEDIR_MODE is set to 1; this is set by linux/unix
+         * bootloaders when they restart themselves within the same process
+         * to achieve single-process onedir execution mode. This case should
+         * be treated as if extractionpath was not set at this point yet,
+         * i.e., in_child needs to be reset to 0. */
+        char *pyi_onedir_mode = pyi_getenv("_PYI_ONEDIR_MODE");
+        if (pyi_onedir_mode) {
+            if (strcmp(pyi_onedir_mode, "1") == 0) {
+                in_child = 0;
+            }
+            free(pyi_onedir_mode);
+            pyi_unsetenv("_PYI_ONEDIR_MODE");
+        }
+    }
 
     /* If the Python program we are about to run invokes another PyInstaller
      * one-file program as subprocess, this subprocess must not be fooled into
@@ -95,11 +150,24 @@ pyi_main(int argc, char * argv[])
 
     VS("LOADER: _MEIPASS2 is %s\n", (extractionpath ? extractionpath : "NULL"));
 
-    if ((! pyi_arch_setup(archive_status, executable)) &&
-        (! pyi_arch_setup(archive_status, archivefile))) {
-            FATALERROR("Cannot open self %s or archive %s\n",
+    /* Try opening the archive; first attempt to read it from executable
+     * itself (embedded mode), then from a stand-alone pkg file (sideload mode)
+     */
+    if (!pyi_arch_setup(archive_status, executable, executable)) {
+        if (!pyi_arch_setup(archive_status, archivefile, executable)) {
+            FATALERROR("Cannot open PyInstaller archive from executable (%s) or external archive (%s)\n",
                        executable, archivefile);
             return -1;
+        } else if (extractionpath == NULL) {
+            /* Check if package side-load is allowed. But only on the first
+             * run, in the parent process (i.e., when extractionpath is not
+             * yet set). */
+            rc = _pyi_allow_pkg_sideload(executable);
+            if (rc != 0) {
+                FATALERROR("Cannot side-load external archive %s (code %d)!\n", archivefile, rc);
+                return -1;
+            }
+        }
     }
 
 #if defined(__linux__)
@@ -132,19 +200,64 @@ pyi_main(int argc, char * argv[])
         extractionpath = homepath;
     }
 
+#else
+
+    /* On other OSes (linux and unix-like), we also use single-process for
+     * --onedir mode. However, in contrast to Windows and macOS, we need to
+     * set environment (i.e., LD_LIBRARY_PATH) and then restart/replace the
+     * process via exec() without fork() for the environment changes (library
+     * search path) to take effect. */
+     if (!extractionpath && !pyi_launch_need_to_extract_binaries(archive_status)) {
+        VS("LOADER: No need to extract files to run; setting up environment and restarting bootloader...\n");
+
+        /* Set _MEIPASS2, so that the restarted bootloader process will enter
+         * the codepath that corresponds to child process. */
+        pyi_setenv("_MEIPASS2", homepath);
+
+        /* Set _PYI_ONEDIR_MODE to signal to restarted bootloader that it
+         * should reset in_child variable even though it is operating in
+         * child-process mode. This is necessary for splash screen to
+         * be shown. */
+        pyi_setenv("_PYI_ONEDIR_MODE", "1");
+
+        /* Set up the environment, especially LD_LIBRARY_PATH. This is the
+         * main reason we are going to restart the bootloader in the first
+         * place. */
+        if (pyi_utils_set_environment(archive_status) == -1) {
+            return -1;
+        }
+
+        /* Restart the process. The helper function performs exec() without
+         * fork(), so we never return from the call. */
+        if (pyi_utils_replace_process(executable, argc, argv) == -1) {
+            return -1;
+        }
+    }
+
 #endif
 
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__CYGWIN__)
     if (extractionpath) {
         /* Add extraction folder to DLL search path */
-        wchar_t * dllpath_w;
-        dllpath_w = pyi_win32_utils_from_utf8(NULL, extractionpath, 0);
-        SetDllDirectory(dllpath_w);
-        VS("LOADER: SetDllDirectory(%s)\n", extractionpath);
-        free(dllpath_w);
+        wchar_t dllpath_w[PATH_MAX];
+#if defined(__CYGWIN__)
+        /* Cygwin */
+        if (cygwin_conv_path(CCP_POSIX_TO_WIN_W | CCP_RELATIVE, extractionpath, dllpath_w, PATH_MAX) != 0) {
+            FATAL_PERROR("cygwin_conv_path", "Failed to convert DLL search path!\n");
+            return -1;
+        }
+#else
+        /* Windows */
+        if (pyi_win32_utils_from_utf8(dllpath_w, extractionpath, PATH_MAX) == NULL) {
+            FATALERROR("Failed to convert DLL search path!\n");
+            return -1;
+        }
+#endif  /* defined(__CYGWIN__) */
+        VS("LOADER: SetDllDirectory(%S)\n", dllpath_w);
+        SetDllDirectoryW(dllpath_w);
     }
-#endif
+#endif  /* defined(_WIN32) || defined(__CYGWIN__) */
 
     /*
      * Check for splash screen resources.
@@ -208,7 +321,14 @@ pyi_main(int argc, char * argv[])
             }
             /* Process Apple events; this updates argc_pyi/argv_pyi
              * accordingly */
-            pyi_process_apple_events(true);  /* short_timeout */
+            /* NOTE: processing Apple events swallows up the initial
+             * OAPP event, which seems to cause segmentation faults
+             * in tkinter-based frozen bundles made with Homebrew
+             * python 3.9 and Tcl/Tk 8.6.11. Until the exact cause
+             * is determined and addressed, this functionality must
+             * remain disabled.
+             */
+            /*pyi_process_apple_events(true);*/  /* short_timeout */
             /* Update pointer to arguments */
             pyi_utils_get_args(&archive_status->argc, &archive_status->argv);
             /* TODO: do we need to de-register Apple event handlers before

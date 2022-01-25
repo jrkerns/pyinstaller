@@ -28,7 +28,7 @@ but is not tested against them as part of the continuous integration tests.
 Main Advantages
 ---------------
 
-- Works out-of-the-box with any Python version 3.6-3.9.
+- Works out-of-the-box with any Python version 3.6-3.10.
 - Fully multi-platform, and uses the OS support to load the dynamic libraries,
   thus ensuring full compatibility.
 - Correctly bundles the major Python packages such as numpy, PyQt5,
@@ -54,7 +54,7 @@ Requirements and Tested Platforms
 
 - Python: 
 
- - 3.6-3.9
+ - 3.6-3.10
  - tinyaes_ 1.0+ (only if using bytecode encryption).
    Instead of installing tinyaes, ``pip install pyinstaller[encryption]`` instead.
 
@@ -62,9 +62,8 @@ Requirements and Tested Platforms
 
  - PyInstaller should work on Windows 7 or newer, but we only officially support Windows 8+.
 
- - We don't support Python installed from the Windows store when not using virtual environments due to 
-   `permission errors <https://github.com/pyinstaller/pyinstaller/pull/4702>`_ 
-   that can't easily be fixed.
+ - Support for Python installed from the Windows store without using virtual
+   environments requires PyInstaller 4.4 or later.
     
 - GNU/Linux (32bit/64bit)
 
@@ -146,5 +145,5 @@ in the `Changelog`_ section of the manual.
 
 
 .. _tinyaes: https://github.com/naufraghi/tinyaes-py
-.. _`manual`: https://pyinstaller.readthedocs.io/en/v4.4/
-.. _`Changelog`: https://pyinstaller.readthedocs.io/en/v4.4/CHANGES.html
+.. _`manual`: https://pyinstaller.readthedocs.io/en/latest/
+.. _`Changelog`: https://pyinstaller.readthedocs.io/en/latest/CHANGES.html

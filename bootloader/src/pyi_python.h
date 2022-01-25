@@ -47,10 +47,12 @@
  */
 
 /* Forward declarations of opaque Python types. */
-struct _object;
-typedef struct _object PyObject;
+struct _PyObject;
+typedef struct _PyObject PyObject;
 struct _PyThreadState;
 typedef struct _PyThreadState PyThreadState;
+struct _PyCompilerFlags;
+typedef struct _PyCompilerFlags PyCompilerFlags;
 
 /* The actual declarations of var & function entry points used. */
 
@@ -83,7 +85,7 @@ EXTDECLPROC(wchar_t *, Py_GetPath, (void));  /* new in Python 3 */
 
 EXTDECLPROC(void, PySys_SetPath, (wchar_t *));
 EXTDECLPROC(int, PySys_SetArgvEx, (int, wchar_t **, int));
-EXTDECLPROC(int, PyRun_SimpleString, (char *));  /* Py3: UTF-8 encoded string */
+EXTDECLPROC(int, PyRun_SimpleStringFlags, (const char *, PyCompilerFlags *));  /* Py3: UTF-8 encoded string */
 
 /* In Python 3 for these the first argument has to be a UTF-8 encoded string: */
 EXTDECLPROC(PyObject *, PyImport_ExecCodeModule, (char *, PyObject *));
@@ -131,30 +133,12 @@ EXTDECLPROC(PyObject *, PyMarshal_ReadObjectFromString, (const char *, size_t));
 /* Used to get traceback information while launching run scripts */
 EXTDECLPROC(void, PyErr_Fetch, (PyObject **, PyObject **, PyObject **));
 EXTDECLPROC(void, PyErr_Restore, (PyObject *, PyObject *, PyObject *));
+EXTDECLPROC(void, PyErr_NormalizeException, (PyObject **, PyObject **, PyObject **));
 EXTDECLPROC(PyObject *, PyObject_Str, (PyObject *));
 EXTDECLPROC(PyObject *, PyObject_GetAttrString, (PyObject *, const char *));
 EXTDECLPROC(const char *, PyUnicode_AsUTF8, (PyObject *));
 EXTDECLPROC(PyObject *, PyUnicode_Join, (PyObject *, PyObject *));
 EXTDECLPROC(PyObject *, PyUnicode_Replace, (PyObject *, PyObject *, PyObject *, size_t));  /* Py_ssize_t */
-
-/*
- * Macros for reference counting through exported functions
- * (that is: without binding to the binary structure of a PyObject.
- * These rely on the Py_IncRef/Py_DecRef API functions on Pyhton 2.4+.
- *
- * Python versions before 2.4 do not export IncRef/DecRef as a binary API,
- * but only as macros in header files. Since we support Python 2.4+ we do not
- * need to provide an emulated incref/decref as it was with older Python
- * versions.
- *
- * We do not want to depend on Python.h for many reasons (including the fact
- * that we would like to have a single binary for all Python versions).
- */
-
-#define Py_XINCREF(o)    PI_Py_IncRef(o)
-#define Py_XDECREF(o)    PI_Py_DecRef(o)
-#define Py_DECREF(o)     Py_XDECREF(o)
-#define Py_INCREF(o)     Py_XINCREF(o)
 
 int pyi_python_map_names(HMODULE dll, int pyvers);
 

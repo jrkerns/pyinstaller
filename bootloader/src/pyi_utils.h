@@ -53,6 +53,10 @@ int pyi_utils_create_child(const char *thisfile, const ARCHIVE_STATUS *status,
                            const int argc, char *const argv[]);
 int pyi_utils_set_environment(const ARCHIVE_STATUS *status);
 
+#if !defined(_WIN32) && !defined(__APPLE__)
+int pyi_utils_replace_process(const char *thisfile, const int argc, char *const argv[]);
+#endif
+
 /* Argument handling */
 int pyi_utils_initialize_args(const int argc, char *const argv[]);
 void pyi_utils_get_args(int *argc, char ***argv);
@@ -69,5 +73,9 @@ void pyi_utils_free_args();
  */
 void pyi_process_apple_events(bool short_timeout);
 #endif  /* defined(__APPLE__) && defined(WINDOWED) */
+
+/* Magic pattern matching */
+extern const unsigned char MAGIC_BASE[8];
+uint64_t pyi_utils_find_magic_pattern(FILE *fp, const unsigned char *magic, size_t magic_len);
 
 #endif  /* HEADER_PY_UTILS_H */

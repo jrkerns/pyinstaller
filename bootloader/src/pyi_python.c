@@ -59,6 +59,7 @@ DECLPROC(PyErr_Occurred);
 DECLPROC(PyErr_Print);
 DECLPROC(PyErr_Fetch);
 DECLPROC(PyErr_Restore);
+DECLPROC(PyErr_NormalizeException);
 
 DECLPROC(PyImport_AddModule);
 DECLPROC(PyImport_ExecCodeModule);
@@ -72,7 +73,7 @@ DECLPROC(PyObject_CallFunctionObjArgs);
 DECLPROC(PyObject_SetAttrString);
 DECLPROC(PyObject_GetAttrString);
 DECLPROC(PyObject_Str);
-DECLPROC(PyRun_SimpleString);
+DECLPROC(PyRun_SimpleStringFlags);
 DECLPROC(PySys_AddWarnOption);
 DECLPROC(PySys_SetArgvEx);
 DECLPROC(PySys_GetObject);
@@ -128,6 +129,7 @@ pyi_python_map_names(HMODULE dll, int pyvers)
     GETPROC(dll, PyErr_Print);
     GETPROC(dll, PyErr_Fetch);
     GETPROC(dll, PyErr_Restore);
+    GETPROC(dll, PyErr_NormalizeException);
     GETPROC(dll, PyImport_AddModule);
     GETPROC(dll, PyImport_ExecCodeModule);
     GETPROC(dll, PyImport_ImportModule);
@@ -141,7 +143,7 @@ pyi_python_map_names(HMODULE dll, int pyvers)
     GETPROC(dll, PyObject_GetAttrString);
     GETPROC(dll, PyObject_Str);
 
-    GETPROC(dll, PyRun_SimpleString);
+    GETPROC(dll, PyRun_SimpleStringFlags);
 
     GETPROC(dll, PySys_AddWarnOption);
     GETPROC(dll, PySys_SetArgvEx);

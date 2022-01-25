@@ -71,11 +71,11 @@ pyi_pylib_load(ARCHIVE_STATUS *status)
       uint32_t pyvers_major;
       uint32_t pyvers_minor;
 
-      pyvers_major = pyvers / 10;
-      pyvers_minor = pyvers % 10;
+      pyvers_major = pyvers / 100;
+      pyvers_minor = pyvers % 100;
 
       len = snprintf(dllname, DLLNAME_LEN,
-              "libpython%01d.%01d.a(libpython%01d.%01d.so)",
+              "libpython%d.%d.a(libpython%d.%d.so)",
               pyvers_major, pyvers_minor, pyvers_major, pyvers_minor);
     }
     else {
@@ -150,8 +150,9 @@ pyi_pylib_attach(ARCHIVE_STATUS *status, int *loadedNew)
     HMODULE dll;
     char nm[PATH_MAX + 1];
     int ret = 0;
+
     /* Get python's name */
-    sprintf(nm, "python%02d.dll", pyvers);
+    sprintf(nm, "python%d%d.dll", pyvers / 100, pyvers % 100);
 
     /* See if it's loaded */
     dll = GetModuleHandleA(nm);
@@ -401,7 +402,7 @@ pyi_pylib_start_python(ARCHIVE_STATUS *status)
     static wchar_t progname_w[PATH_MAX + 1];
 
     /* Decode using current locale */
-    if (!pyi_locale_char2wchar(progname_w, status->archivename, PATH_MAX)) {
+    if (!pyi_locale_char2wchar(progname_w, status->executablename, PATH_MAX)) {
         FATALERROR("Failed to convert progname to wchar_t\n");
         return -1;
     }
@@ -498,7 +499,7 @@ pyi_pylib_start_python(ARCHIVE_STATUS *status)
 
     /* Check for a python error */
     if (PI_PyErr_Occurred()) {
-        FATALERROR("Error detected starting Python VM.");
+        FATALERROR("Error detected starting Python VM.\n");
         return -1;
     }
 
@@ -551,7 +552,7 @@ pyi_pylib_import_modules(ARCHIVE_STATUS *status)
 
             /* Unmarshall code object for module; we need to skip
                the pyc header */
-            if (pyvers >= 37) {
+            if (pyvers >= 307) {
                 /* Python 3.7 changed header size to 16 bytes */
                 co = PI_PyMarshal_ReadObjectFromString((const char *) modbuf + 16, ptoc->ulen - 16);
             } else {
@@ -675,7 +676,7 @@ pyi_pylib_finalize(ARCHIVE_STATUS *status)
      */
     if (status->is_pylib_loaded == true) {
         #ifndef WINDOWED
-            /* 
+            /*
              * We need to manually flush the buffers because otherwise there can be errors.
              * The native python interpreter flushes buffers before calling Py_Finalize,
              * so we need to manually do the same. See isse #4908.
@@ -684,16 +685,16 @@ pyi_pylib_finalize(ARCHIVE_STATUS *status)
             VS("LOADER: Manually flushing stdout and stderr\n");
 
             /* sys.stdout.flush() */
-            PI_PyRun_SimpleString(
+            PI_PyRun_SimpleStringFlags(
                 "import sys; sys.stdout.flush(); \
                 (sys.__stdout__.flush if sys.__stdout__ \
-                is not sys.stdout else (lambda: None))()");
+                is not sys.stdout else (lambda: None))()", NULL);
 
             /* sys.stderr.flush() */
-            PI_PyRun_SimpleString(
+            PI_PyRun_SimpleStringFlags(
                 "import sys; sys.stderr.flush(); \
                 (sys.__stderr__.flush if sys.__stderr__ \
-                is not sys.stderr else (lambda: None))()");
+                is not sys.stderr else (lambda: None))()", NULL);
 
         #endif
 

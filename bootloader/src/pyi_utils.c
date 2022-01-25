@@ -270,8 +270,13 @@ wchar_t
         return NULL;
     }
     // Get the absolute path
-    wruntime_tmpdir_abspath = _wfullpath(NULL, wruntime_tmpdir_expanded,
-                                         PATH_MAX);
+    if (pyi_win32_is_drive_root(wruntime_tmpdir_expanded)) {
+        /* Disk drive (e.g., "c:"); do not attempt to call _wfullpath(), because it will return
+           the current directory of this drive. So return a verbatim copy instead. */
+        wruntime_tmpdir_abspath = _wcsdup(wruntime_tmpdir_expanded);
+    } else {
+        wruntime_tmpdir_abspath = _wfullpath(NULL, wruntime_tmpdir_expanded, PATH_MAX);
+    }
     if (!wruntime_tmpdir_abspath) {
         FATALERROR("LOADER: Failed to obtain the absolute path of the runtime-tmpdir.\n");
         return NULL;
@@ -575,19 +580,6 @@ pyi_remove_temp_path(const char *dir)
     rmdir(dir);
 }
 #endif /* ifdef _WIN32 */
-
-/* TODO is this function still used? Could it be removed? */
-/*
- * If binaries were extracted, this should be called
- * to remove them
- */
-void
-cleanUp(ARCHIVE_STATUS *status)
-{
-    if (status->temppath[0]) {
-        pyi_remove_temp_path(status->temppath);
-    }
-}
 
 /*
  * helper for extract2fs
@@ -1095,6 +1087,32 @@ pyi_utils_create_child(const char *thisfile, const ARCHIVE_STATUS* status,
 }
 
 
+#if !defined(__APPLE__)
+
+/* Replace the current process with another instance of itself, i.e.,
+ * restart the process in-place (exec() without fork()). Used on linux
+ * and unix-like OSes to achieve single-process onedir execution mode.
+ */
+int pyi_utils_replace_process(const char *thisfile, const int argc, char *const argv[])
+{
+    int rc;
+
+    /* Use helper to copy argv into NULL-terminated arguments array, argv_pyi. */
+    if (pyi_utils_initialize_args(argc, argv) < 0) {
+        return -1;
+    }
+    /* Replace the current executable image. */
+    rc = execvp(thisfile, argv_pyi);
+    /* This part is reached only if exec() failed. */
+    if (rc < 0) {
+        VS("Failed to exec: %s\n", strerror(errno));
+    }
+    return rc;
+}
+
+#endif /* !defined(__APPLE) */
+
+
 /*
  * Initialize private argc_pyi and argv_pyi from the given argc and
  * argv by creating a deep copy. The resulting argc_pyi and argv_pyi
@@ -1479,7 +1497,7 @@ static pascal OSErr handle_apple_event(const AppleEvent *theAppleEvent, AppleEve
     default:
         /* Not 'GURL', 'odoc', 'rapp', or 'actv'  -- this is not reached unless there is a
          * programming error in the code that sets up the handler(s) in pyi_process_apple_events. */
-        OTHERERROR("LOADER [AppleEvent]: %s called with unexpected event type '%s'!",
+        OTHERERROR("LOADER [AppleEvent]: %s called with unexpected event type '%s'!\n",
                    __FUNCTION__, CC2Str(evtCode));
         return errAEEventNotHandled;
     }
@@ -1622,3 +1640,89 @@ void pyi_process_apple_events(bool short_timeout)
 #endif /* if defined(__APPLE__) && defined(WINDOWED) */
 
 #endif /* WIN32 */
+
+/*
+ * The base for MAGIC pattern(s) used within the bootloader. The actual
+ * pattern should be programmatically constructed by copying this
+ * array to a buffer and adjusting the fourth byte. This way, we avoid
+ * storing the actual pattern in the executable, which would produce
+ * false-positive matches when the executable is scanned.
+ */
+const unsigned char MAGIC_BASE[8] = {
+    'M', 'E', 'I', 000,
+    013, 012, 013, 016
+};
+
+/*
+ * Perform full back-to-front scan of the given file and search for the
+ * specified MAGIC pattern.
+ *
+ * Returns offset within the file if MAGIC pattern is found, 0 otherwise.
+ */
+uint64_t
+pyi_utils_find_magic_pattern(FILE *fp, const unsigned char *magic, size_t magic_len)
+{
+    static const int SEARCH_CHUNK_SIZE = 8192;
+    unsigned char *buffer = NULL;
+    uint64_t start_pos, end_pos;
+    uint64_t offset = 0;  /* return value */
+
+    /* Allocate the read buffer */
+    buffer = malloc(SEARCH_CHUNK_SIZE);
+    if (!buffer) {
+        VS("LOADER: failed to allocate read buffer (%d bytes)!\n", SEARCH_CHUNK_SIZE);
+        goto cleanup;
+    }
+
+    /* Determine file size */
+    if (pyi_fseek(fp, 0, SEEK_END) < 0) {
+        VS("LOADER: failed to seek to the end of the file!\n");
+        goto cleanup;
+    }
+    end_pos = pyi_ftell(fp);
+
+    /* Sanity check */
+    if (end_pos < magic_len) {
+        VS("LOADER: file is too short to contain magic pattern!\n");
+        goto cleanup;
+    }
+
+    /* Search the file back to front, in overlapping SEARCH_CHUNK_SIZE
+     * chunks. */
+    do {
+        size_t chunk_size, i;
+        start_pos = (end_pos >= SEARCH_CHUNK_SIZE) ? (end_pos - SEARCH_CHUNK_SIZE) : 0;
+        chunk_size = (size_t)(end_pos - start_pos);
+
+        /* Is the remaining chunk large enough to hold the pattern? */
+        if (chunk_size < magic_len) {
+            break;
+        }
+
+        /* Read the chunk */
+        if (pyi_fseek(fp, start_pos, SEEK_SET) < 0) {
+            VS("LOADER: failed to seek to the offset 0x%" PRIX64 "!\n", start_pos);
+            goto cleanup;
+        }
+        if (fread(buffer, 1, chunk_size, fp) != chunk_size) {
+            VS("LOADER: failed to read chunk (%zd bytes)!\n", chunk_size);
+            goto cleanup;
+        }
+
+        /* Scan the chunk */
+        for (i = chunk_size - magic_len + 1; i > 0; i--) {
+            if (memcmp(buffer + i -1, magic, magic_len) == 0) {
+                offset = start_pos + i - 1;
+                goto cleanup;
+            }
+        }
+
+        /* Adjust search location for next chunk; ensure proper overlap */
+        end_pos = start_pos + magic_len - 1;
+    } while (start_pos > 0);
+
+cleanup:
+    free(buffer);
+
+    return offset;
+}
